@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/supabaseClient';
 import { useRouter } from 'next/navigation';
+import { User } from '@supabase/supabase-js'; // Import the User type
 
 // Define a type for the settings data
 interface Settings {
@@ -12,7 +13,7 @@ interface Settings {
 }
 
 const EmployeePage = () => {
-  const [user, setUser] = useState<any | null>(null);
+  const [user, setUser] = useState<User | null>(null); // Use the User type from Supabase
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<Settings>({
@@ -23,20 +24,21 @@ const EmployeePage = () => {
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [attendanceStatus, setAttendanceStatus] = useState<string | null>(null);
+  const [hasCheckedInToday, setHasCheckedInToday] = useState(false); // Track daily check-in
 
   const router = useRouter();
 
   useEffect(() => {
     const getSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      setUser(session?.user);
+      setUser(session?.user || null); // Ensure user is nullable
       setLoading(false);
     };
 
     getSession();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user);
+      setUser(session?.user || null); // Ensure user is nullable
     });
 
     return () => subscription?.unsubscribe();
@@ -60,6 +62,32 @@ const EmployeePage = () => {
 
     fetchSettings();
   }, []);
+
+    useEffect(() => {
+    const checkDailyAttendance = async () => {
+      if (!user) return;
+
+      const today = new Date();
+      const startOfDay = today.toISOString().split('T')[0] + 'T00:00:00.000Z';
+      const endOfDay = today.toISOString().split('T')[0] + 'T23:59:59.999Z';
+
+
+      const { data, error } = await supabase
+        .from('attendance')
+        .select('id')
+        .eq('user_id', user.id)
+        .gte('check_in_time', startOfDay)
+        .lte('check_in_time', endOfDay);
+
+      if (error) {
+        console.error("Error checking daily attendance", error);
+        setError("Failed to check daily attendance");
+      } else {
+        setHasCheckedInToday(data && data.length > 0);
+      }
+    };
+    checkDailyAttendance();
+  }, [user]);
 
   const handleCheckIn = async () => {
     if (!settings.central_latitude || !settings.central_longitude || !settings.geofence_radius) {
@@ -94,7 +122,7 @@ const EmployeePage = () => {
               console.error('Error recording check-in:', attendanceError);
             } else {
               setAttendanceStatus('Checked in successfully!');
-              // Optionally, update UI to show check-out button
+              setHasCheckedInToday(true); // Update state to reflect check-in
             }
           } else {
             setError('You are not within the authorized location.');
@@ -152,7 +180,6 @@ const EmployeePage = () => {
               console.error('Error recording check-out:', updateError);
             } else {
               setAttendanceStatus('Checked out successfully!');
-              // Optionally, update UI to show check-in button
             }
           } else {
             setError('No active check-in found.');
@@ -206,15 +233,18 @@ const EmployeePage = () => {
       {attendanceStatus && <p>{attendanceStatus}</p>}
 
       {/* Determine whether to show Check-in or Check-out button */}
-      {/* This is a very basic implementation - you'll likely need to query the DB for current status */}
-      <button onClick={handleCheckIn} disabled={isCheckingIn}>
-        {isCheckingIn ? 'Checking in...' : 'Check In'}
-      </button>
-      <button onClick={handleCheckOut} disabled={isCheckingOut}>
-        {isCheckingOut ? 'Checking out...' : 'Check Out'}
-      </button>
+      {hasCheckedInToday ? (
+        <button onClick={handleCheckOut} disabled={isCheckingOut}>
+          {isCheckingOut ? 'Checking out...' : 'Check Out'}
+        </button>
+      ) : (
+        <button onClick={handleCheckIn} disabled={isCheckingIn}>
+          {isCheckingIn ? 'Checking in...' : 'Check In'}
+        </button>
+      )}
     </div>
   );
 };
 
 export default EmployeePage;
+
